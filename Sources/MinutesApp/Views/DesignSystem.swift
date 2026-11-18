@@ -798,20 +798,6 @@ enum SpeakerPalette {
     }
 }
 
-/// 話者の表示名。未割当のクラスタは "spk_0" ではなく「話者 1」と出す。
-enum SpeakerNaming {
-    static func title(for speaker: SpeakerRecord?, clusterLabel: String?, selfName: String) -> String {
-        if let name = speaker?.displayName, !name.isEmpty { return name }
-        let label = speaker?.clusterLabel ?? clusterLabel
-        guard let label else { return "?" }
-        if label == TrackMerger.micSpeakerLabel { return selfName }
-        if label.hasPrefix("spk_"), let index = Int(label.dropFirst(4)) { return "話者 \(index + 1)" }
-        if label.hasPrefix("manual_") { return "（名前なし）" }
-        if label.hasPrefix("c"), let underscore = label.firstIndex(of: "_") { return "話者 \(label[label.index(after: underscore)...])" }
-        return label
-    }
-}
-
 extension Formatting {
     /// 期限（YYYY-MM-DD）を「今日 / 明日 / 9月20日（土）」と、超過なら「期限超過」の印で返す。
     static func due(_ raw: String, now: Date = Date()) -> (text: String, overdue: Bool) {

@@ -111,6 +111,12 @@ struct MeetingDetailContent: View {
     private var notesDraft: UserNotesDraft { detail.notesDraft }
     private var selfName: String { model.selfDisplayName }
 
+    /// 話者のラベル（spk_0 など）→ 表示名。話者のラベルでなければ nil。
+    private func speakerName(forLabel label: String) -> String? {
+        guard let speaker = detail.speakers.first(where: { $0.clusterLabel == label }) else { return nil }
+        return SpeakerNaming.title(for: speaker, clusterLabel: label, selfName: selfName)
+    }
+
     /// 表示する発話（旧世代の根拠へジャンプしたときはその発話も含める）。背景の声として除外した話者の発話は、開いたときだけ出す。
     private var displayedSegments: [SegmentRecord] {
         var segments = detail.segments
@@ -582,7 +588,7 @@ struct MeetingDetailContent: View {
             if actions.isEmpty { EmptyRow(text: "アクションはありません").transition(Motion.placeholder) }
             ForEach(actions) { item in
                 let action = item.action
-                ActionRow(action: action, selfName: selfName, onToggle: { detail.toggleAction(action, done: $0) }, resolve: resolveEvidence, onJump: jump)
+                ActionRow(action: action, selfName: selfName, speakerName: speakerName(forLabel:), onToggle: { detail.toggleAction(action, done: $0) }, resolve: resolveEvidence, onJump: jump)
                     .contextMenu {
                         if action.id != nil {
                             Button(role: .destructive) { detail.removeAction(action) } label: { Label("削除", systemImage: "trash") }
@@ -982,6 +988,42 @@ struct MeetingActionsMenu: View {
             } label: {
                 Label("この会議のリンクをコピー", systemImage: "link")
             }
+            Button {
+                guard let detail = target?.detail else { return }
+                do {
+                    NSWorkspace.shared.open(try detail.writeHTMLPreview(selfName: model.settings.resolvedSelfName))
+                } catch {
+                    detail.error = "HTML を作れません: \(error.localizedDescription)"
+                }
+            } label: {
+                Label("議事録を HTML で開く", systemImage: "safari")
+            }
+            Button {
+                guard let detail = target?.detail else { return }
+                HTMLExportPanel.run(detail: detail, selfName: model.settings.resolvedSelfName)
+            } label: {
+                Label("議事録を HTML で書き出す…", systemImage: "square.and.arrow.down")
+            }
+            Button {
+                guard let detail = target?.detail else { return }
+                do {
+                    let markdown = try detail.notionMarkdown(selfName: model.settings.resolvedSelfName)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(markdown, forType: .string)
+                } catch {
+                    detail.error = "議事録を読めません: \(error.localizedDescription)"
+                }
+            } label: {
+                Label("Notion 用にコピー（Markdown）", systemImage: "doc.on.clipboard")
+            }
+            if state.isCloudOk, state.isDone, model.canShareToNotion {
+                Button {
+                    guard let meetingId = target?.detail.meetingId else { return }
+                    Task { await model.shareToNotion(meetingId: meetingId) }
+                } label: {
+                    Label("Notion に送る", systemImage: "paperplane")
+                }
+            }
             if state.isCloudOk {
                 Button {
                     if let meeting = target?.detail.meeting {
@@ -1010,6 +1052,25 @@ struct MeetingActionsMenu: View {
             Label("操作", systemImage: "ellipsis.circle")
         }
         .help("この会議の操作")
+    }
+}
+
+/// 議事録の HTML を、保存先を選んで書き出す（ローカル専用の会議も、利用者が選んだ場所へは書ける）。
+@MainActor
+enum HTMLExportPanel {
+    static func run(detail: MeetingDetailModel, selfName: String?) {
+        let panel = NSSavePanel()
+        panel.title = "議事録を HTML で書き出す"
+        panel.allowedContentTypes = [.html]
+        panel.nameFieldStringValue = detail.htmlFileName
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try detail.writeHTML(to: url, selfName: selfName)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            detail.error = "HTML を書き出せません: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -1388,6 +1449,8 @@ struct EvidenceChips: View {
 struct ActionRow: View {
     let action: MinutesSummary.ActionItem
     var selfName = "自分"
+    /// 担当が話者のラベル（spk_0 など）のとき、その話者の表示名（要約が担当を話者のラベルで返すことがある）。
+    var speakerName: (String) -> String? = { _ in nil }
     let onToggle: (Bool) -> Void
     let resolve: (Int) -> EvidenceInfo?
     let onJump: (Int) -> Void
@@ -1400,7 +1463,7 @@ struct ActionRow: View {
         case "me": action.kind == .ownCommitment ? nil : selfName
         case "agent": action.kind == .delegable ? nil : "エージェント"
         case "": nil
-        default: action.owner
+        default: speakerName(action.owner) ?? action.owner
         }
     }
 

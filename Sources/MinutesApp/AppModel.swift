@@ -339,6 +339,7 @@ final class AppModel {
         let summarizer = try? SummaryProviders.make(settings: settings)
         var targets: [any SyncTarget] = []
         if let sync = settings.syncDirectoryURL { targets.append(LocalDirectorySyncTarget(destination: sync)) }
+        if settings.notionAutoShare, let notion = notionSyncTarget() { targets.append(notion) }
         let providers = PipelineProviders(
             cloud: cloud,
             local: local,
@@ -411,6 +412,33 @@ final class AppModel {
 
     var hasCloudTranscriber: Bool { hasKey(APIKeys.elevenLabs) || hasKey(APIKeys.openAI) }
     /// 要約できるか。Codex / Claude Code は実行時まで分からないので可とする。「要約しない」と、キーのない Anthropic は不可。
+    /// Notion に送る同期先（トークンとデータベースがあるとき）。
+    func notionSyncTarget() -> NotionSyncTarget? {
+        guard let store, let database = settings.notionDatabaseReference, let token = APIKeys.resolve(APIKeys.notion) else { return nil }
+        return NotionSyncTarget(client: NotionClient(token: token), database: database, store: store, selfName: settings.resolvedSelfName)
+    }
+
+    /// Notion に送れるか（「⋯」の項目を出すか）。
+    var canShareToNotion: Bool {
+        _ = apiKeysRevision
+        return settings.notionDatabaseReference != nil && APIKeys.resolve(APIKeys.notion) != nil
+    }
+
+    /// 会議を Notion に送り、ページを開く。中身が同じでも送り直す（手で押したとき）。
+    func shareToNotion(meetingId: String) async {
+        guard let target = notionSyncTarget() else {
+            operationError = NotionError.notConfigured.localizedDescription
+            return
+        }
+        do {
+            let url = try await target.share(meetingId: meetingId, force: true)
+            try? store?.logExport(meetingId: meetingId, target: target.id, status: .ok)
+            if let url, let pageURL = URL(string: url) { NSWorkspace.shared.open(pageURL) }
+        } catch {
+            operationError = "Notion に送れません: \(error.localizedDescription)"
+        }
+    }
+
     var hasSummarizer: Bool {
         switch settings.resolvedSummaryProvider {
         case .codex, .claudeCode: true

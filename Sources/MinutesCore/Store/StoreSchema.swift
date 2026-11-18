@@ -175,6 +175,20 @@ public enum StoreSchema {
             ALTER TABLE meetings ADD COLUMN summary_language TEXT;
             """)
         }
+        // 同期先（Notion など）に作ったものの ID。2 回目からは同じページを更新する。中身が同じなら送らない（content_hash）。
+        migrator.registerMigration("v9_sync_refs") { db in
+            try db.execute(sql: """
+            CREATE TABLE sync_refs (
+              meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+              target TEXT NOT NULL,
+              remote_id TEXT NOT NULL,
+              url TEXT,
+              content_hash TEXT,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (meeting_id, target)
+            );
+            """)
+        }
         return migrator
     }
 }

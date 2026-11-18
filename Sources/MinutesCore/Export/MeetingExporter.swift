@@ -167,10 +167,14 @@ public enum MeetingExporter {
         let summaryData = try summary.map { try JSONCoding.encoder().encode($0) }
 
         // meeting.md
-        let markdown = renderMarkdown(meeting: meeting, speakers: speakers, segments: segments, notes: input.notes, transcriptSha256: transcriptSha, generatedBy: "\(generatorName) (\(input.providerDescription)\(input.notes?.model.map { ", \($0)" } ?? ""))", displayName: displayName)
+        let generatedBy = "\(generatorName) (\(input.providerDescription)\(input.notes?.model.map { ", \($0)" } ?? ""))"
+        let markdown = renderMarkdown(meeting: meeting, speakers: speakers, segments: segments, notes: input.notes, transcriptSha256: transcriptSha, generatedBy: generatedBy, displayName: displayName)
         let markdownData = Data(markdown.utf8)
 
-        var files: [(name: String, data: Data)] = [("meeting.md", markdownData), ("transcript.json", transcriptData)]
+        // meeting.html（ブラウザでそのまま読める議事録）
+        let htmlData = Data(renderHTML(input, generatedBy: generatedBy, now: now).utf8)
+
+        var files: [(name: String, data: Data)] = [("meeting.md", markdownData), ("meeting.html", htmlData), ("transcript.json", transcriptData)]
         if let summaryData { files.append(("summary.json", summaryData)) }
         let folder = folderName(meeting: meeting)
         let manifest = ExportManifest(
@@ -181,6 +185,71 @@ public enum MeetingExporter {
             files: Dictionary(uniqueKeysWithValues: files.map { ($0.name, ExportManifest.FileEntry(sha256: sha256Hex($0.data), bytes: $0.data.count)) })
         )
         return ExportBundle(folderName: folder, files: files, manifest: manifest)
+    }
+
+    /// 人が読む議事録（HTML・Notion）の材料。除外した話者（背景の声）の発言は入れず、名前のない話者は
+    /// アプリの画面と同じく「自分」「話者 1」と呼ぶ（`selfName` は設定の自分の表示名）。
+    public struct Presentation: Sendable {
+        public var meeting: MeetingRecord
+        public var language: MeetingLanguage
+        public var selfName: String
+        public var speakerNames: [String]
+        public var segments: [SegmentRecord]
+        public var notes: NotesRecord?
+        /// 話者のラベル（spk_0 など）→ 表示名。要約が担当を話者のラベルで返したときに使う。
+        public var ownerNames: [String: String]
+        public var displayName: @Sendable (SegmentRecord) -> String
+        public var generatedBy: String
+
+        /// 根拠の発言 ID → 発言（全文にあるものだけ）。
+        public var segmentsById: [Int: SegmentRecord] {
+            Dictionary(segments.compactMap { segment in segment.id.map { (Int($0), segment) } }, uniquingKeysWith: { first, _ in first })
+        }
+
+        /// アクションの担当の表示名（"me" は自分の表示名、話者のラベルは話者の表示名）。
+        public func ownerName(_ owner: String) -> String {
+            if owner == "me" { return selfName }
+            return ownerNames[owner] ?? owner
+        }
+    }
+
+    public static func presentation(_ input: Input, selfName: String? = nil, generatedBy: String? = nil) -> Presentation {
+        let language = input.meeting.summaryOutputLanguage
+        let me = selfName.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? (language == .ja ? "自分" : "Me")
+        let names = Dictionary(uniqueKeysWithValues: input.speakers.map { ($0.id, SpeakerNaming.title(for: $0, clusterLabel: nil, selfName: me, language: language)) })
+        let namesByCluster = Dictionary(input.speakers.map { ($0.clusterLabel, SpeakerNaming.title(for: $0, clusterLabel: nil, selfName: me, language: language)) }, uniquingKeysWith: { first, _ in first })
+        let displayName: @Sendable (SegmentRecord) -> String = { segment in
+            if let id = segment.speakerId, let name = names[id] { return name }
+            if let cluster = segment.clusterLabel, let name = namesByCluster[cluster] { return name }
+            return SpeakerNaming.title(for: nil, clusterLabel: segment.clusterLabel, selfName: me, language: language)
+        }
+        return Presentation(
+            meeting: input.meeting,
+            language: language,
+            selfName: me,
+            speakerNames: input.speakers.filter { !$0.excluded }.compactMap { names[$0.id] },
+            segments: BackgroundVoices.removingExcluded(input.segments, speakers: input.speakers),
+            notes: input.notes,
+            ownerNames: namesByCluster.filter { $0.key != TrackMerger.micSpeakerLabel },
+            displayName: displayName,
+            generatedBy: generatedBy ?? "\(generatorName) (\(input.providerDescription)\(input.notes?.model.map { ", \($0)" } ?? ""))"
+        )
+    }
+
+    /// 議事録の HTML（SPEC §7.3 の meeting.html）。
+    public static func renderHTML(_ input: Input, selfName: String? = nil, generatedBy: String? = nil, now: Date = Date()) -> String {
+        let view = presentation(input, selfName: selfName, generatedBy: generatedBy)
+        var html = MeetingHTMLRenderer.Input(
+            meeting: view.meeting,
+            speakerNames: view.speakerNames,
+            segments: view.segments,
+            notes: view.notes,
+            selfName: view.selfName,
+            generatedBy: view.generatedBy,
+            displayName: view.displayName
+        )
+        html.ownerNames = view.ownerNames
+        return MeetingHTMLRenderer.render(html, now: now)
     }
 
     static func yamlString(_ value: String) -> String {

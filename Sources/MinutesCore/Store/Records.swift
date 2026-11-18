@@ -430,3 +430,25 @@ public struct KeytermRecord: MinutesRecord, Equatable {
         self.createdAt = createdAt
     }
 }
+
+/// 同期先（Notion など）に作ったものの ID（会議 × 同期先で 1 件）。
+public struct SyncRefRecord: MinutesRecord, Equatable {
+    public static let databaseTableName = "sync_refs"
+
+    public var meetingId: String
+    public var target: String
+    public var remoteId: String
+    public var url: String?
+    /// 最後に送った中身の sha256。同じなら送らない。
+    public var contentHash: String?
+    public var updatedAt: Date
+
+    public init(meetingId: String, target: String, remoteId: String, url: String?, contentHash: String?, updatedAt: Date = Date()) {
+        self.meetingId = meetingId
+        self.target = target
+        self.remoteId = remoteId
+        self.url = url
+        self.contentHash = contentHash
+        self.updatedAt = updatedAt
+    }
+}

@@ -94,6 +94,14 @@ public final class Store: Sendable {
         return store
     }
 
+    /// 読み取り専用で開く（マイグレーション・中断した会議の回復をしない）。アプリが使っている DB を CLI から読むため。
+    public static func openReadOnly(at url: URL = defaultURL()) throws -> Store {
+        var configuration = Configuration()
+        configuration.readonly = true
+        let pool = try DatabasePool(path: url.path, configuration: configuration)
+        return Store(writer: pool, leaseDirectory: url.resolvingSymlinksInPath().appendingPathExtension("locks"))
+    }
+
     /// テスト用のインメモリ DB。
     public static func inMemory() throws -> Store {
         var configuration = Configuration()
@@ -986,6 +994,38 @@ public final class Store: Sendable {
             let provider = try PipelineRunRecord.filter(Column("meeting_id") == meetingId && Column("step") == PipelineStep.transcribeFinal.rawValue)
                 .order(Column("id").desc).fetchOne(db)?.provider ?? (final.isEmpty ? "live" : "unknown")
             return try write(.init(meeting: meeting, speakers: speakers, segments: segments, notes: notes, providerDescription: provider))
+        }
+    }
+
+    // MARK: - Sync refs
+
+    public func syncRef(meetingId: String, target: String) throws -> SyncRefRecord? {
+        try writer.read { db in
+            try SyncRefRecord.filter(Column("meeting_id") == meetingId && Column("target") == target).fetchOne(db)
+        }
+    }
+
+    public func saveSyncRef(_ record: SyncRefRecord) throws {
+        try writer.write { db in try record.save(db) }
+    }
+
+    public func deleteSyncRef(meetingId: String, target: String) throws {
+        _ = try writer.write { db in
+            try SyncRefRecord.filter(Column("meeting_id") == meetingId && Column("target") == target).deleteAll(db)
+        }
+    }
+
+    /// 会議の書き出しの材料を読む（ローカル専用の会議も読む。手元で HTML を開く・CLI で確かめるため）。
+    public func exportInput(meetingId: String) throws -> MeetingExporter.Input {
+        try writer.read { db in
+            guard let meeting = try MeetingRecord.fetchOne(db, key: meetingId) else { throw StoreError.notFound(meetingId) }
+            let final = try Store.fetchSegments(db, meetingId: meetingId, source: .final)
+            let segments = final.isEmpty ? try Store.fetchSegments(db, meetingId: meetingId, source: .live) : final
+            let speakers = try Store.fetchSpeakers(db, meetingId: meetingId)
+            let notes = try NotesRecord.fetchOne(db, key: meetingId)
+            let provider = try PipelineRunRecord.filter(Column("meeting_id") == meetingId && Column("step") == PipelineStep.transcribeFinal.rawValue)
+                .order(Column("id").desc).fetchOne(db)?.provider ?? (final.isEmpty ? "live" : "unknown")
+            return .init(meeting: meeting, speakers: speakers, segments: segments, notes: notes, providerDescription: provider)
         }
     }
 
