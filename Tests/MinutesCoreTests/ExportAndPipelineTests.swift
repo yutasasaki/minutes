@@ -100,7 +100,7 @@ struct ExportAndPipelineTests {
         ], openQuestions: [], keytermsLearned: [])
         let notes = NotesRecord(meetingId: meeting.id, summary: summary, model: "claude-sonnet-5 / prompt v1")
         let bundle = try MeetingExporter.build(.init(meeting: meeting, speakers: speakers, segments: segments, notes: notes, providerDescription: "elevenlabs.scribe_v2"))
-        #expect(bundle.files.map(\.name) == ["meeting.md", "transcript.json", "summary.json"])
+        #expect(bundle.files.map(\.name) == ["meeting.md", "meeting.html", "transcript.json", "summary.json"])
         let markdown = String(decoding: bundle.files[0].data, as: UTF8.self)
         #expect(markdown.hasPrefix("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntitle: \"週次定例 / PJ AI\"\n"))
         #expect(markdown.contains("## 要約\n\n要約です"))
@@ -113,7 +113,7 @@ struct ExportAndPipelineTests {
         let written = try bundle.write(into: root)
         let verified = try ExportManifest.verify(directory: written)
         #expect(verified.meetingId == meeting.id)
-        #expect(verified.files.count == 3)
+        #expect(verified.files.count == 4)
         // 改ざん検知
         try Data("x".utf8).write(to: written.appendingPathComponent("summary.json"))
         #expect(throws: ExportError.self) { try ExportManifest.verify(directory: written) }

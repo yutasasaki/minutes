@@ -501,6 +501,33 @@ public final class MeetingDetailModel {
         }
     }
 
+    /// 議事録の HTML を一時フォルダに作って、その場所を返す（ブラウザで開く用。ローカル専用の会議も手元にだけ作る）。
+    /// 開くたびに DB の最新の内容から作り直す。
+    public func writeHTMLPreview(selfName: String? = nil) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Minutes-HTML", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(htmlFileName)
+        try writeHTML(to: url, selfName: selfName)
+        return url
+    }
+
+    /// 議事録の HTML を書く（利用者が選んだ保存先へ）。DB の最新の内容から作る。
+    public func writeHTML(to url: URL, selfName: String? = nil) throws {
+        let input = try store.exportInput(meetingId: meetingId)
+        try Data(MeetingExporter.renderHTML(input, selfName: selfName).utf8).write(to: url, options: .atomic)
+    }
+
+    /// Notion に貼る Markdown（「Notion 用にコピー」）。DB の最新の内容から作る。
+    public func notionMarkdown(selfName: String? = nil) throws -> String {
+        let input = try store.exportInput(meetingId: meetingId)
+        return NotionMarkdown.render(MeetingExporter.presentation(input, selfName: selfName), flavor: .paste)
+    }
+
+    /// HTML の既定のファイル名（書き出しフォルダの名前と同じ形）。
+    public var htmlFileName: String {
+        meeting.map { MeetingExporter.folderName(meeting: $0) + ".html" } ?? "meeting.html"
+    }
+
     /// 書き出しフォルダ（この会議の分）。まだ書き出していなければ nil。
     public func exportFolderURL(in exportDirectory: URL) -> URL? {
         guard let meeting else { return nil }

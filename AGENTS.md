@@ -10,7 +10,7 @@
 
 - macOS 26 以降（SpeechAnalyzer）、Xcode 26 以降、Swift 6（言語モード 6）。Apple Silicon。
 - 依存: GRDB.swift、FluidAudio（ローカル話者分離）。それ以外は Apple フレームワークのみ。swift-argument-parser は使わず `Sources/MinutesCore/Support/ArgumentParser.swift` の最小実装を使う。
-- 秘密情報: `.env`（`.gitignore` 済み、`.env.example` を参照）または環境変数。`ELEVENLABS_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`。コードにもリポジトリにも入れない。アプリは 設定 > プロバイダ で Keychain に登録する。
+- 秘密情報: `.env`（`.gitignore` 済み、`.env.example` を参照）または環境変数。`ELEVENLABS_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `NOTION_API_KEY`。コードにもリポジトリにも入れない。アプリは 設定 > プロバイダ で Keychain に登録する。
 
 ## コマンド
 
@@ -125,5 +125,6 @@ site/                        公開ページ（minutes.tools、日本語と英�
   - `MINUTES_CODEX_LIVE=1 swift test --filter CodexSummarizerTests.liveSmoke`（`MINUTES_CODEX_MODEL=<id>`）
   - `MINUTES_CLAUDE_CODE_LIVE=1 swift test --filter ClaudeCodeSummarizerTests.liveSmoke`（`MINUTES_CLAUDE_CODE_MODEL=<alias>`）
   - `MINUTES_CLAUDE_CODE_LIVE=1 swift test --filter ClaudeCodeSummarizerTests.liveModels`
+- `MINUTES_NOTION_LIVE=1 MINUTES_NOTION_DATABASE=<データベースの URL> swift test --filter NotionTests.liveSmoke` は、架空の会議を実際の Notion に作って更新し、ゴミ箱に移す（シークレットは `.env` の `NOTION_API_KEY`。`MINUTES_NOTION_KEEP=1` でページを残す）。
 - CLI の品質検証は `python3 scripts/test-transcribe-validation.py .build/debug/minutes-cli`。
 - `MINUTES_SPEECH_LIVE=1 swift test --filter LiveLocaleRestartTests` は、実際の SpeechAnalyzer で録音中の言語の切り替え（認識器の開き直し）を確かめる任意テスト（fixtures/sample_meeting の音声を使う。送信なし、新しいモデルも落とさない）。

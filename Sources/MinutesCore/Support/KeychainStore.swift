@@ -83,6 +83,8 @@ public enum APIKeys {
     public static let elevenLabs = ElevenLabsTranscriber.apiKeyEnvName
     public static let openAI = OpenAITranscriber.apiKeyEnvName
     public static let anthropic = ClaudeSummarizer.apiKeyEnvName
+    /// Notion のインテグレーションのシークレット（設定 > 書き出し）。
+    public static let notion = "NOTION_API_KEY"
 
     /// 起動中に Keychain から読んだキー（読めなかったときの nil も含む）。Keychain の読み取りは、許可のない版
     /// （署名の違う版で保存したキーなど）では確認のダイアログを出すので、1 つのキーは 1 回だけ読む（2026-10-07）。

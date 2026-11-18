@@ -21,7 +21,7 @@
 
 ### 1.1 目的
 
-Google Meet・Microsoft Teams・Zoom などのオンライン会議を Mac 上でローカルに録音し、話者付きの文字起こしと要約を Notes 風の UI で検索できるようにする。会議の記録は Markdown と JSON で書き出し、ほかのツールに渡せる（§7.3、§9）。
+Google Meet・Microsoft Teams・Zoom などのオンライン会議を Mac 上でローカルに録音し、話者付きの文字起こしと要約を Notes 風の UI で検索できるようにする。会議の記録は Markdown・HTML・JSON で書き出し、ほかのツールに渡せる（§7.3、§9）。
 
 2026-09-30 に、OSS（Apache-2.0）として公開し、公式ビルドを配ることを決めた（§17、Phase 1.5）。
 
@@ -330,6 +330,17 @@ CREATE TABLE export_log (
   checksum TEXT,
   status TEXT NOT NULL
 );
+
+-- 同期先（Notion など）に作ったものの ID（§9.3）。会議を消すと消える
+CREATE TABLE sync_refs (
+  meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  target TEXT NOT NULL,              -- notion
+  remote_id TEXT NOT NULL,           -- Notion のページ ID
+  url TEXT,
+  content_hash TEXT,                 -- 最後に送った中身の sha256（同じなら送らない）
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (meeting_id, target)
+);
 ```
 
 マイグレーションは GRDB の `DatabaseMigrator` で管理する。
@@ -375,6 +386,7 @@ generated_by: minutes/0.1 (elevenlabs.scribe_v2, codex/<model>, prompt v3)
 ```
 
 - 見出しは要約の言語に合わせる（英語なら `## Summary` / `## Decisions` / `## Action items` / `## Open questions` / `## Notes` / `## Transcript`）。
+- `meeting.html` — `meeting.md` と同じ内容を、ブラウザでそのまま読める 1 ファイルの HTML にしたもの（`MeetingHTMLRenderer`）。CSS と小さなスクリプトを埋め込み、外部のフォント・画像・スクリプトは読まない。ライト・ダークは OS に従い、印刷では全文も出す。根拠の発言（#123）は同じページの全文へ飛び、全文は絞り込める。見出しは要約の言語に合わせる。会議画面の「⋯ > 議事録を HTML で開く」は同じ HTML を一時フォルダに作ってブラウザで開き、「議事録を HTML で書き出す…」は選んだ場所に保存する（どちらもローカル専用の会議でも使える。送信はしない）。CLI は `minutes-cli html`（DB を読み取り専用で開く）。
 - `transcript.json` — `{ meeting, language, speakers, segments: [{id, t_start, t_end, speaker, text}] }`
 - `summary.json` — Summarizer の構造化出力そのまま（§8.1）
 - `manifest.json` — `schema_version`、ファイル一覧と sha256
@@ -466,6 +478,7 @@ protocol SyncTarget {
 - `LocalDirectory`（Phase 1）: 任意のフォルダにコピー。Google Drive / Dropbox の同期フォルダを指定すれば、ほかの機器にも届く。
 - `Webhook`（Phase 2）: 任意の受け口に会議フォルダを multipart で POST する（共有トークン）。受け口は manifest の sha256 で改ざんを検知できる。
 - `S3Compatible`（Phase 2/3）: R2 / S3 に PUT（SigV4）。バックアップや、正本をクラウドに置きたい場合。
+- `Notion`（2026-11-18）: Notion のデータベースに議事録のページを作る（§9.3）。
 - 失敗時はローカルキュー（`export_log.status = 'pending'`）に残し、起動時と 10 分ごとに再送。
 
 ### 9.2 受け側
@@ -473,6 +486,19 @@ protocol SyncTarget {
 - 受け側（Webhook の受け口や、タスク管理につなぐエージェント）はこのリポジトリの外で作る。
 - 受け側は `meeting.md` と `summary.json` を読み、`action_items` を `kind` ごとに扱う（§8.1）。`transcript.json` は根拠の確認が必要なときだけ読む。
 - 根拠へは `minutes://meeting/<id>?seg=<segment_id>` のディープリンクで戻れる。`minutes://` は Minutes.app が登録し（`CFBundleURLTypes`）、該当の発言にジャンプして再生する。
+
+### 9.3 Notion
+
+議事録を Notion に渡す方法は 2 つ（2026-11-18 決定）。
+
+- **コピーして貼る**（設定なし）: 会議の「⋯ > Notion 用にコピー（Markdown）」。素の Markdown（`NotionMarkdown` の `.paste`）をクリップボードに入れ、Notion に貼ると見出し・箇条書き・ToDo に変わる。ローカル専用の会議でもコピーできる（送信はしない）。
+- **API で作る**（`NotionSyncTarget`）: 設定 > 書き出し で Notion のインテグレーションのシークレット（Keychain の `NOTION_API_KEY`）と、議事録を作るデータベース（URL か ID）を登録する。データベースにはそのインテグレーションを「接続」で追加しておく。
+  - 「会議が終わったら Notion に送る」（既定でオン）なら、後処理の書き出し（§8 の 7）で同期先として送る。失敗は `export_log` の pending に残して再送する（§9.1）。会議の「⋯ > Notion に送る」で手でも送れ、送ったページを開く。
+  - Notion API の版は `2026-03-11`。データベースから最初のデータソースを引き、`data_source_id` を親にしてページを作る。本文は Notion-flavored Markdown（`markdown_version: "v2"`）で送り、全文は見出しのトグル（`<toggle heading="h2">`）に畳む。
+  - 列は型と名前で自動で選ぶ: タイトル（title）、日時（date。「日付」「日時」「Date」などを優先、date の列が 1 つならそれ）、タグ（multi_select の「タグ」「Tags」など）、参加者（multi_select か rich_text の「参加者」「Attendees」など）。ない列には入れない。「接続を確認」で割り当てを見せる。
+  - 作ったページの ID は `sync_refs`（会議 × 同期先）に残し、2 回目からは同じページの列と本文（`replace_content`）を更新する。中身（本文・列）の sha256 が前回と同じなら送らない。ページが Notion で消されていたら作り直す。
+  - ローカル専用の会議は送らない。ローカル専用に切り替えて「書き出し済みファイルも削除」を選ぶと、Notion のページをゴミ箱に移す（Notion で 30 日は戻せる）。
+  - 根拠は Notion から開けない `minutes://` のリンクにせず、発言の時刻で示す。名前のない話者は画面と同じく「自分」「話者 1」と書く。
 
 ---
 

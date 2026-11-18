@@ -21,6 +21,7 @@ struct MinutesCLI {
             case "cut": try CutCommand.run(rest)
             case "repair-rate": try RepairRateCommand.run(rest)
             case "process": try await ProcessCommand.run(rest)
+            case "html": try HTMLCommand.run(rest)
             case "processes": try ProcessesCommand.run(rest)
             case "devices": try DevicesCommand.run(rest)
             case "assets": try await AssetsCommand.run(rest)
@@ -86,6 +87,11 @@ struct MinutesCLI {
               --summary-only で保存済み本文から要約だけを更新（本文・根拠 ID は保持）
               --language ja|en で会議の言語を決める（省略すると新しい会議はライブ字幕から自動判定）。--summary-language ja|en で要約の言語
               Codex の要約は codex login、Claude Code の要約は claude auth login のログインを使用。ANTHROPIC_API_KEY は不要。
+
+          minutes-cli html [<meeting-id> ...] [--latest N] [--out <dir>] [--db <path>] [--format html|notion|notion-api]
+              保存済みの会議を議事録の HTML（書き出しの meeting.html と同じもの）にする。DB は読み取り専用で開く。
+              --format notion で「Notion 用にコピー」の Markdown、notion-api で Notion API に送る Markdown。
+              会議 ID を省くと最新の --latest 件（既定 1）。--out の既定はカレントの html/。
 
           minutes-cli repair-rate <recording-dir> --out <new-dir> --track system|mic --sample-rate <Hz>
               一定の入力レート誤認を原本から別フォルダへ補正。指定値と録音時計を照合する。

@@ -1160,7 +1160,7 @@ struct ExportSettingsPane: View {
             } header: {
                 Text("書き出し")
             } footer: {
-                Text("1 会議 = 1 フォルダで meeting.md / transcript.json / summary.json / manifest.json を書き出します。空欄なら Application Support 内に書き出します。")
+                Text("1 会議 = 1 フォルダで meeting.md / meeting.html（ブラウザで読める議事録）/ transcript.json / summary.json / manifest.json を書き出します。空欄なら Application Support 内に書き出します。")
             }
             Section {
                 DirectoryField(
@@ -1173,9 +1173,80 @@ struct ExportSettingsPane: View {
             } footer: {
                 Text("Google Drive / Dropbox などのフォルダを指定すると、書き出し後にコピーします。ローカルのみの会議は同期しません。")
             }
+            NotionSettingsSection(draft: $draft)
         }
         .formStyle(.grouped)
         .frame(height: SettingsView.paneHeight)
+    }
+}
+
+/// Notion への共有（SPEC §9.3）。インテグレーションのシークレットは Keychain、データベースは設定に持つ。
+struct NotionSettingsSection: View {
+    @Environment(AppModel.self) private var model
+    @Binding var draft: AppSettings
+    @State private var check: CheckState = .idle
+
+    enum CheckState: Equatable {
+        case idle, checking
+        case ok(String)
+        case failed(String)
+    }
+
+    var body: some View {
+        Section {
+            APIKeyRow(name: APIKeys.notion, provider: "Notion")
+            LabeledContent("データベース") {
+                TextField("", text: Binding(get: { draft.notionDatabase ?? "" }, set: { draft.notionDatabase = $0.isEmpty ? nil : $0; check = .idle }),
+                          prompt: Text("データベースの URL を貼り付け"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+            }
+            Toggle("会議が終わったら Notion に送る", isOn: $draft.notionAutoShare)
+            LabeledContent("") {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Button(check == .checking ? "確認しています…" : "接続を確認", action: runCheck)
+                        .disabled(check == .checking || draft.notionDatabaseReference == nil)
+                    switch check {
+                    case let .ok(message):
+                        Label(message, systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Palette.mint)
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    case let .failed(message):
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(Palette.record)
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    default:
+                        EmptyView()
+                    }
+                }
+            }
+        } header: {
+            Text("Notion")
+        } footer: {
+            Text("notion.so/profile/integrations でインテグレーションを作り、そのシークレットを登録します。議事録用のデータベースを開き、「…」>「接続」にそのインテグレーションを追加してから URL を貼ってください。日付・タグ・参加者の列があれば、会議の日時・タグ・参加者を入れます。ローカルのみの会議は送りません。API に送らず、会議の「⋯」>「Notion 用にコピー」で貼ることもできます。")
+        }
+    }
+
+    private func runCheck() {
+        guard let database = draft.notionDatabaseReference else { return }
+        guard let token = APIKeys.resolve(APIKeys.notion) else {
+            check = .failed("先にシークレットを登録してください")
+            return
+        }
+        check = .checking
+        Task {
+            do {
+                let source = try await NotionClient(token: token).resolveDataSource(database)
+                let mapping = try NotionPropertyMapping(properties: source.properties)
+                check = .ok("「\(source.name.isEmpty ? "（無題）" : source.name)」に作ります（\(mapping.summary)）")
+            } catch {
+                check = .failed(error.localizedDescription)
+            }
+        }
     }
 }
 

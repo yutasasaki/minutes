@@ -72,6 +72,16 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var onboardingCompletedAt: Date?
     /// 参加者に録音を知らせる文面。nil か空なら `AppSettings.defaultRecordingNotice`。
     public var recordingNotice: String?
+    /// 議事録を作る Notion のデータベース（URL か ID）。連携トークンは Keychain（`APIKeys.notion`）。
+    public var notionDatabase: String?
+    /// 会議が終わったら Notion に送る（データベースとトークンがあるとき）。
+    public var notionAutoShare: Bool = true
+
+    /// Notion に送れる設定か（トークンは別に確かめる）。
+    public var notionDatabaseReference: String? {
+        let value = notionDatabase?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
 
     public static let defaultRecordingNotice = "この会議は、議事録を作るために録音と文字起こしをしています。録音を望まない方はお知らせください。"
 
@@ -117,6 +127,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         appearance = (try? container.decodeIfPresent(String.self, forKey: .appearance)).flatMap(AppAppearance.init(rawValue:)) ?? defaults.appearance
         onboardingCompletedAt = try? container.decodeIfPresent(Date.self, forKey: .onboardingCompletedAt)
         recordingNotice = try container.decodeIfPresent(String.self, forKey: .recordingNotice)
+        notionDatabase = try container.decodeIfPresent(String.self, forKey: .notionDatabase)
+        notionAutoShare = try container.decodeIfPresent(Bool.self, forKey: .notionAutoShare) ?? defaults.notionAutoShare
     }
 
     private enum LegacyKeys: String, CodingKey {
