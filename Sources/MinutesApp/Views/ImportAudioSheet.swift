@@ -162,7 +162,7 @@ struct ImportAudioSheet: View {
             startedAt: startedAt,
             language: language,
             privacy: privacy,
-            platform: event?.meetingURL == nil ? nil : event?.platform,
+            platform: event?.meetingURL == nil ? .file : event?.platform,
             calendarEventId: event?.id,
             calendarTitle: event?.title,
             attendees: event?.attendees ?? []

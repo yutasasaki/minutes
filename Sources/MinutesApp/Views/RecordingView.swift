@@ -124,7 +124,7 @@ struct RecordingHeader: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 TintedTile(
-                    systemImage: state == .recording ? (meeting?.meetingPlatform ?? .other).symbol : state.symbol,
+                    systemImage: state == .recording ? MeetingKind(meeting?.meetingPlatform).symbol : state.symbol,
                     tint: state.tint,
                     size: 30,
                     pulse: state == .recording

@@ -6,7 +6,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SettingsTab: String, CaseIterable, Sendable {
-    case recording, providers, export, calendar, people, appearance, diagnostics, about
+    case recording, providers, export, hooks, calendar, people, appearance, diagnostics, about
 }
 
 /// 設定（SPEC §10.3）。変更は 0.5 秒後に自動で保存・適用する。API キーはプロバイダの行で入力し、Keychain に保存する。
@@ -25,6 +25,7 @@ struct SettingsView: View {
             Tab("録音", systemImage: "record.circle", value: .recording) { RecordingSettingsPane(draft: $draft) }
             Tab("プロバイダ", systemImage: "cloud", value: .providers) { ProviderSettingsPane(draft: $draft) }
             Tab("書き出し", systemImage: "square.and.arrow.up", value: .export) { ExportSettingsPane(draft: $draft) }
+            Tab("フック", systemImage: "paperplane", value: .hooks) { HookSettingsPane(draft: $draft) }
             Tab("カレンダー", systemImage: "calendar", value: .calendar) { CalendarSettingsPane(draft: $draft) }
             Tab("人物と用語", systemImage: "person.2", value: .people) { PeopleAndTermsPane() }
             Tab("外観", systemImage: "circle.lefthalf.filled", value: .appearance) { AppearanceSettingsPane(draft: $draft) }

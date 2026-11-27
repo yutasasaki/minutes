@@ -12,8 +12,18 @@ public enum MeetingStatus: String, Codable, Sendable, CaseIterable {
     case recording, finalizing, done, failed
 }
 
+/// 会議の場。アイコンと書き出しの `platform` に使う。nil は予定のない録音。
+/// `other` はリンクのないカレンダーの予定（対面など）、`file` は音声ファイルの取り込み。
 public enum MeetingPlatform: String, Codable, Sendable, CaseIterable {
-    case meet, teams, other
+    case meet, zoom, teams, other, file
+
+    /// 録音したアプリの bundle ID から会議の場を決める（予定のない録音用。ブラウザは決められない）。
+    public static func forApp(bundleIdentifier: String?) -> MeetingPlatform? {
+        guard let id = bundleIdentifier?.lowercased() else { return nil }
+        if id.hasPrefix("us.zoom.") { return .zoom }
+        if id.hasPrefix("com.microsoft.teams") { return .teams }
+        return nil
+    }
 }
 
 public enum SegmentSource: String, Codable, Sendable {

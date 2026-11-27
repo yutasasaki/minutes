@@ -235,8 +235,9 @@ public enum MeetingHTMLRenderer {
     static func platformName(_ platform: MeetingPlatform?) -> String? {
         switch platform {
         case .meet: "Google Meet"
+        case .zoom: "Zoom"
         case .teams: "Microsoft Teams"
-        case .other, nil: nil
+        case .other, .file, nil: nil
         }
     }
 

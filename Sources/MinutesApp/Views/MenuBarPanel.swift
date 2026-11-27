@@ -151,12 +151,12 @@ struct MenuBarPanel: View {
         case .armed:
             return TintedTile(systemImage: "waveform.badge.magnifyingglass", tint: Palette.amber)
         case .recording:
-            return TintedTile(systemImage: (model.currentMeeting?.meetingPlatform ?? .other).symbol, tint: Palette.record, pulse: true)
+            return TintedTile(systemImage: MeetingKind(model.currentMeeting?.meetingPlatform).symbol, tint: Palette.record, pulse: true)
         case .finalizing:
             return TintedTile(systemImage: "hourglass", tint: Palette.periwinkle)
         default:
             if let candidate = chosenCandidate {
-                return TintedTile(systemImage: candidate.platform.symbol, tint: Palette.color(forKey: candidate.title))
+                return TintedTile(systemImage: candidate.platform.symbol, tint: MeetingKind(candidate.platform).fill)
             }
             return TintedTile(systemImage: "waveform", tint: .secondary)
         }
@@ -581,13 +581,16 @@ struct OverviewSection: View {
                                 seconds: entry.seconds,
                                 fraction: today.total > 0 ? entry.seconds / today.total : nil
                             ) {
-                                // 色はバーの区切りと揃える（録音中は赤い点で示す）
-                                PlatformIcon(platform: entry.meeting.meetingPlatform, size: 22, tint: Palette.color(for: entry.meeting))
-                                    .overlay(alignment: .topTrailing) {
-                                        if entry.meeting.meetingStatus == .recording {
-                                            Circle().fill(Palette.record).frame(width: 8, height: 8).offset(x: 3, y: -3)
+                                // 左の点はバーの区切りの色、アイコンは会議の場（録音中は赤い点で示す）
+                                HStack(spacing: 6) {
+                                    Circle().fill(Palette.color(for: entry.meeting)).frame(width: 6, height: 6)
+                                    PlatformIcon(platform: entry.meeting.meetingPlatform, size: 22)
+                                        .overlay(alignment: .topTrailing) {
+                                            if entry.meeting.meetingStatus == .recording {
+                                                Circle().fill(Palette.record).frame(width: 8, height: 8).offset(x: 3, y: -3)
+                                            }
                                         }
-                                    }
+                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -756,7 +759,7 @@ struct ScheduleSection: View {
                     .foregroundStyle(.tertiary)
             }
             .frame(width: 44, alignment: .trailing)
-            PlatformIcon(platform: candidate.platform, size: 22, tint: Palette.color(forKey: candidate.title))
+            PlatformIcon(platform: candidate.platform, size: 22)
             Text(candidate.title)
                 .font(.system(size: 13.5, weight: .medium))
                 .foregroundStyle(isPast && item.recordedMeetingId == nil ? .secondary : .primary)
@@ -873,7 +876,7 @@ struct MeetingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                PlatformIcon(platform: meeting.meetingPlatform, size: 22, tint: Palette.color(for: meeting))
+                PlatformIcon(platform: meeting.meetingPlatform, size: 22)
                 Text(meeting.title)
                     .font(.system(size: 13.5, weight: .semibold))
                     .lineLimit(1)

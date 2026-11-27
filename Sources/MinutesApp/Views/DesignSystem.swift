@@ -80,27 +80,56 @@ extension MeetingStatus {
 }
 
 extension MeetingPlatform {
+    var title: String { MeetingKind(self).title }
+    var symbol: String { MeetingKind(self).symbol }
+}
+
+/// 会議の種類（アイコンの記号と色）。色は会議の場ごとに 1 つに決め、会議シリーズで色を変えない。
+/// 予定のない録音（platform が nil）は「録音」。
+enum MeetingKind: Equatable {
+    case meet, zoom, teams, inPerson, recording, file
+
+    init(_ platform: MeetingPlatform?) {
+        switch platform {
+        case .meet: self = .meet
+        case .zoom: self = .zoom
+        case .teams: self = .teams
+        case .other: self = .inPerson
+        case .file: self = .file
+        case nil: self = .recording
+        }
+    }
+
     var title: String {
         switch self {
         case .meet: "Google Meet"
+        case .zoom: "Zoom"
         case .teams: "Microsoft Teams"
-        case .other: "会議"
+        case .inPerson: "予定の会議"
+        case .recording: "録音"
+        case .file: "取り込んだ音声"
         }
     }
 
     var symbol: String {
         switch self {
-        case .meet: "video.fill"
+        case .meet, .zoom: "video.fill"
         case .teams: "person.2.fill"
-        case .other: "waveform"
+        case .inPerson: "person.2.fill"
+        case .recording: "mic.fill"
+        case .file: "arrow.down.doc.fill"
         }
     }
 
-    var tint: Color {
+    /// タイルの面の色（白い記号を載せる）。会議アプリは見慣れた色に寄せ、録音・取り込みは無彩色。
+    var fill: Color {
         switch self {
-        case .meet: Palette.mint
-        case .teams: Palette.violet
-        case .other: Palette.periwinkle
+        case .meet: Color(light: 0x188038, dark: 0x1E8E3E)
+        case .zoom: Color(light: 0x0B5CFF, dark: 0x2D6BFF)
+        case .teams: Color(light: 0x5059C9, dark: 0x5B5FC7)
+        case .inPerson: Color(light: 0x8A6A4F, dark: 0x9A7A5E)
+        case .recording: Color(light: 0x6E6E73, dark: 0x55555A)
+        case .file: Color(light: 0x7C8591, dark: 0x5E6670)
         }
     }
 }
@@ -407,21 +436,36 @@ struct AvatarView: View {
     }
 }
 
-/// 会議のアイコン。記号は会議アプリ（Meet / Teams / その他）、色は会議シリーズ（`Palette.color(for:)`）か会議アプリ。
+/// 会議のアイコン。会議の場（Meet / Zoom / Teams / 予定 / 録音 / 取り込み）ごとに記号と色が決まる、平らな角丸のタイル。
+/// 録音中は赤い点滅の印に替える。
 struct PlatformIcon: View {
     let platform: MeetingPlatform?
     var size: CGFloat = 32
     var isLive = false
-    var tint: Color?
 
     var body: some View {
-        let platform = platform ?? .other
-        TintedTile(
-            systemImage: isLive ? "record.circle.fill" : platform.symbol,
-            tint: isLive ? Palette.record : (tint ?? platform.tint),
-            size: size,
-            pulse: isLive
-        )
+        if isLive {
+            TintedTile(systemImage: "record.circle.fill", tint: Palette.record, size: size, pulse: true)
+        } else {
+            MeetingKindTile(kind: MeetingKind(platform), size: size)
+        }
+    }
+}
+
+struct MeetingKindTile: View {
+    let kind: MeetingKind
+    var size: CGFloat = 32
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+        Image(systemName: kind.symbol)
+            .font(.system(size: size * (kind == .file ? 0.42 : 0.4), weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(kind.fill, in: shape)
+            .overlay(shape.strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
+            .help(kind.title)
+            .accessibilityLabel(kind.title)
     }
 }
 

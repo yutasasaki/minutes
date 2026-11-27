@@ -30,6 +30,7 @@ final class CalendarService {
             (#"https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}(\?[^\s<>"']*)?"#, .meet),
             (#"https://teams\.microsoft\.com/l/meetup-join/[^\s<>"']+"#, .teams),
             (#"https://teams\.live\.com/meet/[^\s<>"']+"#, .teams),
+            (#"https://([a-z0-9-]+\.)?zoom\.us/(j|my|w|s)/[^\s<>"']+"#, .zoom),
         ]
         for text in texts.compactMap({ $0 }) {
             for (pattern, platform) in patterns {
@@ -54,7 +55,7 @@ final class CalendarService {
         store.calendars(for: .event).sorted { $0.title < $1.title }
     }
 
-    /// now − before 〜 now + after に開始し、Meet / Teams のリンクを含むイベント。
+    /// now − before 〜 now + after に開始し、Meet / Zoom / Teams のリンクを含むイベント。
     func candidates(now: Date = Date(), before: TimeInterval = 10 * 60, after: TimeInterval = 10 * 60, calendarIdentifiers: [String] = []) -> [CalendarCandidate] {
         guard authorized else { return [] }
         let calendars = calendarIdentifiers.isEmpty ? nil : store.calendars(for: .event).filter { calendarIdentifiers.contains($0.calendarIdentifier) }
