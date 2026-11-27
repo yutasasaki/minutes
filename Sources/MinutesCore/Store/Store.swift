@@ -1048,6 +1048,18 @@ public final class Store: Sendable {
         }
     }
 
+    /// 同期先ごとの最新の記録（`prefix` で始まる target だけ。フックの状態の表示用）。新しい順。
+    public func latestExports(targetPrefix prefix: String) throws -> [ExportLogRecord] {
+        try writer.read { db in
+            try ExportLogRecord.fetchAll(db, sql: """
+            SELECT e.* FROM export_log e
+            WHERE e.target LIKE ? ESCAPE '\\'
+              AND e.id = (SELECT MAX(id) FROM export_log WHERE meeting_id = e.meeting_id AND target = e.target)
+            ORDER BY e.id DESC
+            """, arguments: [prefix.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") + "%"])
+        }
+    }
+
     public func exportLog(meetingId: String) throws -> [ExportLogRecord] {
         try writer.read { db in
             try ExportLogRecord.filter(Column("meeting_id") == meetingId).order(Column("id")).fetchAll(db)

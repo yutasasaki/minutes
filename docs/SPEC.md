@@ -476,7 +476,10 @@ protocol SyncTarget {
 ```
 
 - `LocalDirectory`（Phase 1）: 任意のフォルダにコピー。Google Drive / Dropbox の同期フォルダを指定すれば、ほかの機器にも届く。
-- `Webhook`（Phase 2）: 任意の受け口に会議フォルダを multipart で POST する（共有トークン）。受け口は manifest の sha256 で改ざんを検知できる。
+- フック（`HookSyncTarget`、設定 > フック）: 議事録ができて書き出したあとに送る。種類は Webhook（URL に JSON を POST。秘密のヘッダーの値は Keychain）とコマンド（`zsh -lc`。本文は標準入力と `$MINUTES_PAYLOAD`）。
+  - 本文は「会議・要約・全文の JSON」（`event: meeting.minutes_ready`、`meeting`・`summary`・`minutes_markdown`・`transcript`）か「書き出しファイル」（`{"files": {"<フォルダ>/<ファイル>": 中身}}`。minutes の書き出しを取り込める受け手向け）。設定の JSON を本文に足せる。
+  - 送るときは「議事録ができたときに 1 回」（既定）か「直すたびに（中身が変わったら）」。中身の指紋（送った時刻などを除く）を `export_log.checksum` に残し、同じ中身は送らない。会議の「⋯」>「フックに送る」は記録にかかわらず送る。Webhook には `Idempotency-Key: <会議 ID>-<指紋>` を付ける。
+  - ローカル専用の会議は送らない。設定の「テスト送信」は架空の会議を送る。
 - `S3Compatible`（Phase 2/3）: R2 / S3 に PUT（SigV4）。バックアップや、正本をクラウドに置きたい場合。
 - `Notion`（2026-11-18）: Notion のデータベースに議事録のページを作る（§9.3）。
 - 失敗時はローカルキュー（`export_log.status = 'pending'`）に残し、起動時と 10 分ごとに再送。
@@ -591,7 +594,7 @@ minutes/
 
 ### Phase 2 — Webhook 連携
 
-- `Webhook` の SyncTarget（§9.1）。受け側に会議フォルダとアクション候補を渡す。
+- `Webhook` の SyncTarget（§9.1）。受け側に会議フォルダとアクション候補を渡す。フック（Webhook・コマンド）として先に入れた（2026-11-27）。
 
 完了条件: G6。
 

@@ -325,7 +325,12 @@ struct SidebarView: View {
 /// サイドバー下部: 次の会議候補とプロバイダの状態。
 struct SidebarFooter: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openSettings) private var openSettingsWindow
+
+    private func openSettings(_ tab: SettingsTab) {
+        model.requestedSettingsTab = tab
+        model.present(.settings) { openSettingsWindow() }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -339,21 +344,19 @@ struct SidebarFooter: View {
                 NextMeetingCard(candidate: next)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            Button {
-                model.requestedSettingsTab = .providers
-                model.present(.settings) { openSettings() }
-            } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    ProviderStatusRow(symbol: "waveform.badge.magnifyingglass", title: "確定文字起こし", value: model.finalProviderLabel, ready: model.finalProviderReady)
-                    ProviderStatusRow(symbol: "sparkles", title: "要約", value: model.summaryStatusLabel, ready: model.hasSummarizer || model.settings.resolvedSummaryProvider == .none)
+            VStack(alignment: .leading, spacing: 2) {
+                ProviderStatusRow(symbol: "waveform", title: "確定文字起こし", value: model.finalProviderLabel, ready: model.finalProviderReady) {
+                    openSettings(.providers)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Surface.card, in: .rect(cornerRadius: 12, style: .continuous))
-                .contentShape(.rect(cornerRadius: 12))
+                ProviderStatusRow(symbol: "text.alignleft", title: "要約", value: model.summaryStatusLabel, ready: model.hasSummarizer || model.settings.resolvedSummaryProvider == .none) {
+                    openSettings(.providers)
+                }
+                Divider().padding(.horizontal, 8).padding(.vertical, 2)
+                HookStatusRow(status: model.hookStatus) { openSettings(.hooks) }
             }
-            .buttonStyle(.plain)
-            .help("設定を開く")
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Surface.card, in: .rect(cornerRadius: 12, style: .continuous))
         }
         .padding(10)
         .animation(.smooth, value: model.candidates.first?.id)
@@ -366,7 +369,7 @@ struct NextMeetingCard: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            PlatformIcon(platform: candidate.platform, size: 28, tint: Palette.color(forKey: candidate.title))
+            PlatformIcon(platform: candidate.platform, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(candidate.startDate <= Date() ? "進行中の会議" : "次の会議")
                     .font(.caption2)
@@ -400,23 +403,64 @@ struct ProviderStatusRow: View {
     let title: String
     let value: String
     let ready: Bool
+    var readyHelp = "利用できます"
+    var notReadyHelp = "設定が必要です"
+    /// nil なら点を出さない（フックを使っていないときなど）。
+    var showsIndicator = true
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.caption2).foregroundStyle(.secondary)
-                Text(value).font(.caption).lineLimit(1)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.caption2).foregroundStyle(.secondary)
+                    Text(value).font(.caption).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if showsIndicator {
+                    Circle()
+                        .fill(ready ? Palette.mint : Palette.amber)
+                        .frame(width: 7, height: 7)
+                        .help(ready ? readyHelp : notReadyHelp)
+                }
             }
-            Spacer(minLength: 4)
-            Circle()
-                .fill(ready ? Palette.mint : Palette.amber)
-                .frame(width: 7, height: 7)
-                .help(ready ? "利用できます" : "設定が必要です")
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .contentShape(.rect(cornerRadius: 8))
         }
+        .buttonStyle(.plain)
+        .hoverHighlight()
+        .help("\(title)の設定を開く")
+    }
+}
+
+/// サイドバー下部のフックの行。未設定なら追加を促し、未送信があれば件数を出す。
+struct HookStatusRow: View {
+    let status: HookStatus
+    let action: () -> Void
+
+    private var value: String {
+        if status.hooks.isEmpty { return status.configuredCount == 0 ? "議事録の送り先を追加" : "すべてオフ" }
+        if status.pendingCount > 0 { return "\(status.title) ・未送信 \(status.pendingCount) 件" }
+        if let last = status.lastDelivered { return "\(status.title) ・\(Formatting.relativeStart(last)) に送信" }
+        return status.title
+    }
+
+    var body: some View {
+        ProviderStatusRow(
+            symbol: "paperplane",
+            title: "フック",
+            value: value,
+            ready: status.ready,
+            readyHelp: "議事録ができたら送ります",
+            notReadyHelp: "送れていない議事録があります（10 分ごとに送り直します）",
+            showsIndicator: !status.hooks.isEmpty,
+            action: action
+        )
     }
 }
 
@@ -610,7 +654,7 @@ struct MeetingRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            PlatformIcon(platform: meeting.meetingPlatform, size: 34, isLive: isLive, tint: Palette.color(for: meeting))
+            PlatformIcon(platform: meeting.meetingPlatform, size: 34, isLive: isLive)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(meeting.title)

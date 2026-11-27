@@ -356,7 +356,7 @@ struct MeetingDetailContent: View {
     private func header(_ meeting: MeetingRecord) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 14) {
-                PlatformIcon(platform: meeting.meetingPlatform, size: 44, tint: Palette.color(for: meeting))
+                PlatformIcon(platform: meeting.meetingPlatform, size: 44)
                 VStack(alignment: .leading, spacing: 4) {
                     if editingTitle {
                         TextField("タイトル", text: $titleDraft)
@@ -965,7 +965,7 @@ struct MeetingActionsMenu: View {
                 Button {
                     target?.detail.regenerateSummary()
                 } label: {
-                    Label(state.isSummarizing ? "要約中…" : "要約を生成・更新", systemImage: "sparkles")
+                    Label(state.isSummarizing ? "要約中…" : "要約を生成・更新", systemImage: "text.alignleft")
                 }
                 .disabled(state.isSummarizing || state.isExporting)
             }
@@ -1031,6 +1031,14 @@ struct MeetingActionsMenu: View {
                     }
                 } label: {
                     Label("書き出しフォルダを開く", systemImage: "folder")
+                }
+                if state.isDone, !model.settings.activeHooks.isEmpty, let meetingId = target?.detail.meetingId ?? model.selectedMeetingId {
+                    Button {
+                        model.deliverHooks(meetingId: meetingId)
+                    } label: {
+                        Label(model.deliveringHookMeetingIds.contains(meetingId) ? "フックに送信中…" : "フックに送る", systemImage: "paperplane")
+                    }
+                    .disabled(model.deliveringHookMeetingIds.contains(meetingId) || state.isExporting || state.isSummarizing)
                 }
                 if state.isDone {
                     Button {

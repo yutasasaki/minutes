@@ -593,6 +593,32 @@ public final class PostProcessPipeline: Sendable {
         return (folder.url.path, statuses.joined(separator: "; "))
     }
 
+    /// 会議の画面の「フックに送る」: 書き出しフォルダを作り直し、有効なフックへ送った記録にかかわらず送る。
+    /// 送れなかったフックは未送信として残し、書き出しの再送で送り直す。フックごとの結果を返す。
+    @discardableResult
+    public func deliverHooks(meetingId: String) async throws -> [(hook: MeetingHook, error: String?)] {
+        let lease = try store.acquireMeetingLease(meetingId)
+        defer { withExtendedLifetime(lease) {} }
+        guard let meeting = try store.meeting(id: meetingId) else { throw PipelineError.meetingNotFound(meetingId) }
+        guard meeting.privacy == .cloudOk else { throw PipelineError.localOnlyExport }
+        guard meeting.meetingStatus == .done else { throw StoreError.meetingBusy(meetingId) }
+        let hooks = providers.syncTargets.compactMap { $0 as? HookSyncTarget }
+        guard !hooks.isEmpty else { return [] }
+        let folder = try writeExportFolder(meetingId: meetingId)
+        var results: [(hook: MeetingHook, error: String?)] = []
+        for target in hooks {
+            do {
+                let receipt = try await target.deliver(folder: folder.url, meetingId: meetingId, force: true)
+                try store.logExport(meetingId: meetingId, target: target.id, status: .ok, checksum: receipt.checksum)
+                results.append((target.hook, nil))
+            } catch {
+                try store.logExport(meetingId: meetingId, target: target.id, status: .pending, checksum: folder.manifest.checksum)
+                results.append((target.hook, error.localizedDescription))
+            }
+        }
+        return results
+    }
+
     /// DB の内容から書き出しフォルダを（再）生成する。
     public func writeExportFolder(meetingId: String) throws -> (url: URL, manifest: ExportManifest) {
         try store.withCloudExport(meetingId: meetingId) { input in

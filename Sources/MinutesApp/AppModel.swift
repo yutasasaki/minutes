@@ -157,6 +157,10 @@ final class AppModel {
     var requestedSettingsTab: SettingsTab?
     /// Keychain の API キーを保存・削除するたびに増える（キーの有無で変わる表示の更新用）。
     private(set) var apiKeysRevision = 0
+    /// フックごとの最新の送信（サイドバーの状態の表示用。後処理・再送・手動の送信のあとに読み直す）。
+    private(set) var hookDeliveries: [ExportLogRecord] = []
+    /// 「フックに送る」を実行中の会議。
+    private(set) var deliveringHookMeetingIds: Set<String> = []
     /// armed 中に音声を検知し、設定により開始の確認を待っている。
     private(set) var awaitingStartConfirmation = false
     /// 録音中の経過時間。表示する場所ごとに分け、見えていない場所は更新しない。閉じたパネルやウィンドウも、値が替わるたびに
@@ -340,6 +344,10 @@ final class AppModel {
         var targets: [any SyncTarget] = []
         if let sync = settings.syncDirectoryURL { targets.append(LocalDirectorySyncTarget(destination: sync)) }
         if settings.notionAutoShare, let notion = notionSyncTarget() { targets.append(notion) }
+        // 議事録のフック（Webhook・コマンド）。書き出しのあとに送り、失敗したら書き出しの再送で送り直す
+        for hook in settings.activeHooks {
+            targets.append(HookSyncTarget(hook: hook, store: store, secret: hookSecret(hook)))
+        }
         let providers = PipelineProviders(
             cloud: cloud,
             local: local,
@@ -359,6 +367,7 @@ final class AppModel {
         )
         let pipeline = PostProcessPipeline(store: store, providers: providers)
         self.pipeline = pipeline
+        refreshHookDeliveries()
         let queue: PostProcessingQueue
         if let existing = postProcessingQueue {
             existing.updatePipeline(pipeline)
@@ -490,6 +499,85 @@ final class AppModel {
         return APIKeys.resolve(name) != nil
     }
 
+    // MARK: - フック
+
+    /// フックの秘密のヘッダーの値（Keychain）。
+    func hookSecret(_ hook: MeetingHook) -> String? {
+        (try? KeychainStore.get(account: hook.keychainAccount)).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func hasHookSecret(_ hook: MeetingHook) -> Bool {
+        _ = apiKeysRevision
+        return KeychainStore.exists(account: hook.keychainAccount)
+    }
+
+    func saveHookSecret(_ value: String, for hook: MeetingHook) throws {
+        let secret = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty else { return }
+        try KeychainStore.set(secret, account: hook.keychainAccount)
+        apiKeysDidChange()
+    }
+
+    func deleteHookSecret(for hook: MeetingHook) throws {
+        try KeychainStore.delete(account: hook.keychainAccount)
+        apiKeysDidChange()
+    }
+
+    /// 架空の会議で 1 回送ってみる（設定の「テスト送信」）。本物の会議の内容は送らない。
+    func testHook(_ hook: MeetingHook) async -> Result<String, Error> {
+        do {
+            let payload = try HookSamples.payload(for: hook)
+            let secret = hookSecret(hook)
+            let result = try await HookRunner.deliver(hook: hook, payload: payload, secret: secret,
+                                                      context: .init(meetingId: HookSamples.meeting.id, meetingTitle: HookSamples.meeting.title, exportDirectory: nil, event: "meeting.test"))
+            return .success(result)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// 会議の画面の「フックに送る」。送った記録にかかわらず、有効なフックすべてへ送る。
+    func deliverHooks(meetingId: String) {
+        guard let pipeline, !deliveringHookMeetingIds.contains(meetingId) else { return }
+        deliveringHookMeetingIds.insert(meetingId)
+        Task {
+            defer {
+                deliveringHookMeetingIds.remove(meetingId)
+                refreshHookDeliveries()
+            }
+            do {
+                let results = try await pipeline.deliverHooks(meetingId: meetingId)
+                let failed = results.filter { $0.error != nil }
+                for result in results {
+                    appendEvent("フック \(result.hook.displayName): " + (result.error ?? "送信しました"))
+                }
+                if let first = failed.first {
+                    operationError = "フック「\(first.hook.displayName)」に送れませんでした: \(first.error ?? "")\n（10 分ごとに送り直します）"
+                }
+            } catch {
+                operationError = "フックに送れません: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func refreshHookDeliveries() {
+        guard let store else { return }
+        hookDeliveries = (try? store.latestExports(targetPrefix: MeetingHook.targetPrefix)) ?? []
+    }
+
+    /// サイドバーのフックの状態。有効なフックの数・未送信の件数・最後に送った時刻。
+    var hookStatus: HookStatus {
+        let active = settings.activeHooks
+        let ids = Set(active.map(\.targetId))
+        let records = hookDeliveries.filter { ids.contains($0.target) }
+        return HookStatus(
+            hooks: active,
+            configuredCount: settings.hooks.count,
+            pendingCount: records.filter { $0.exportStatus == .pending }.count,
+            lastDelivered: records.filter { $0.exportStatus == .ok }.map(\.exportedAt).max()
+        )
+    }
+
     private func apiKeysDidChange() {
         apiKeysRevision += 1
         rebuildPipeline()
@@ -534,7 +622,10 @@ final class AppModel {
             }
             do {
                 if pending.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    pending.title = await defaultTitle(targets: pending.targetBundleIdentifiers)
+                    let source = await defaultTitleAndApp(targets: pending.targetBundleIdentifiers)
+                    pending.title = source.title
+                    // 予定のない録音でも、Zoom・Teams のアプリで録るならその会議の印を付ける
+                    if pending.platform == nil { pending.platform = MeetingPlatform.forApp(bundleIdentifier: source.bundleIdentifier) }
                 }
                 try await session.start(pending)
                 // 手動開始は録音ビューを見せる（自動開始では選択を変えない）
@@ -720,18 +811,23 @@ final class AppModel {
     /// 予定のない会議の名前。対象アプリ（nil なら設定の一覧）のうち、いま音を出しているかマイクを使っているアプリの名前と日時。
     /// どれも鳴っていなければ「会議」。
     func defaultTitle(targets: [String]? = nil) async -> String {
+        await defaultTitleAndApp(targets: targets).title
+    }
+
+    /// `defaultTitle` と、その名前を付けたアプリの bundle ID（会議の場の判定に使う）。
+    func defaultTitleAndApp(targets: [String]? = nil) async -> (title: String, bundleIdentifier: String?) {
         let targets = targets ?? settings.targetBundleIdentifiers
         let date = Date()
         // Core Audio のプロセス一覧を読むのに時間がかかるので main の外で読む
         let active = await Task.detached { (try? AudioProcessList.activeTargets(targets)) ?? [] }.value
         let running = detector.runningTargets()
-        let name = active.lazy.compactMap { target in
-            running.first { BundleIDMatcher.matches($0.bundleIdentifier, target: target) }?.localizedName
+        let app = active.lazy.compactMap { target in
+            running.first { BundleIDMatcher.matches($0.bundleIdentifier, target: target) }
         }.first
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.dateFormat = "M月d日 H:mm"
-        return "\(name ?? "会議") \(formatter.string(from: date))"
+        return ("\(app?.localizedName ?? "会議") \(formatter.string(from: date))", app?.bundleIdentifier)
     }
 
     /// 録音対象として設定されているアプリのうち、起動しているもの（開始前の選択用）。
@@ -901,6 +997,7 @@ final class AppModel {
             appendEvent("後処理を一時停止: \(id): \(message)")
         case let .completed(id, warnings):
             appendEvent("後処理完了: \(id)")
+            refreshHookDeliveries()
             for (step, message) in warnings { appendEvent("後処理の警告 \(step.rawValue): \(message)") }
             if !warnings.isEmpty {
                 let title = (try? store?.meeting(id: id))?.title ?? "会議"
@@ -1182,7 +1279,7 @@ final class AppModel {
         case meeting, settings, ignored
     }
 
-    /// minutes://meeting/<id>?seg=<n> と minutes://settings?tab=<recording|providers|export|calendar|people|appearance|diagnostics|about>。
+    /// minutes://meeting/<id>?seg=<n> と minutes://settings?tab=<recording|providers|export|hooks|calendar|people|appearance|diagnostics|about>。
     /// 旧 tab=keys（API キーはプロバイダのタブに統合した）はプロバイダを開く。
     @discardableResult
     func handle(url: URL) -> DeepLink {
@@ -1226,6 +1323,7 @@ final class AppModel {
         } catch { appendEvent("削除の再試行に失敗: \(error.localizedDescription)") }
         let report = await pipeline.retryPendingExports()
         for line in report { appendEvent("export retry: \(line)") }
+        refreshHookDeliveries()
         do {
             let purged = try AudioRetention.purge(store: store, retentionDays: settings.audioRetentionDays, managedRoot: settings.audioRootDirectoryURL)
             if !purged.purgedMeetingIds.isEmpty { appendEvent("音声を削除: \(purged.purgedMeetingIds.count) 件") }
@@ -1297,5 +1395,62 @@ struct PendingImport: Identifiable, Equatable {
         let directory = url.deletingLastPathComponent()
         guard directory.lastPathComponent.hasPrefix(DroppedAudioFile.directoryPrefix) else { return }
         try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+/// サイドバーに出すフックの状態。
+struct HookStatus: Equatable {
+    var hooks: [MeetingHook]
+    /// 設定にあるフックの数（無効・未設定も含む）
+    var configuredCount: Int
+    var pendingCount: Int
+    var lastDelivered: Date?
+
+    var title: String {
+        switch hooks.count {
+        case 0: configuredCount == 0 ? "未設定" : "オフ"
+        case 1: hooks[0].displayName
+        default: "\(hooks[0].displayName) ほか \(hooks.count - 1) 件"
+        }
+    }
+
+    var ready: Bool { !hooks.isEmpty && pendingCount == 0 }
+}
+
+/// テスト送信の架空の会議（実会議の内容を送らない）。
+enum HookSamples {
+    static let meeting: MeetingRecord = {
+        var meeting = MeetingRecord(
+            id: "01TESTHOOK0000000000000000",
+            title: "テスト送信（架空の会議）",
+            startedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_790_001_800),
+            platform: .meet,
+            attendees: [Attendee(name: "山田 花子", email: "hanako@example.com"), Attendee(name: "佐藤 一郎", email: "ichiro@example.com")],
+            privacyMode: .cloudOk,
+            status: .done,
+            tags: ["テスト"]
+        )
+        meeting.language = MeetingLanguage.ja.rawValue
+        return meeting
+    }()
+
+    static func payload(for hook: MeetingHook) throws -> HookPayload {
+        let summary = MinutesSummary(
+            summaryMd: "Minutes のフックのテスト送信です。架空の会議なので、受け取った側で消してかまいません。",
+            decisions: [.init(text: "テスト送信の受け取りを確かめる", evidence: [1])],
+            actionItems: [.init(text: "受け取った内容を確認する", owner: "me", kind: .ownCommitment, due: nil, evidence: [2])],
+            openQuestions: [],
+            keytermsLearned: []
+        )
+        let segments: [SegmentRecord] = [
+            SegmentRecord(id: 1, meetingId: meeting.id, source: .final, tStart: 0, tEnd: 4, clusterLabel: "S1", text: "テスト送信を始めます。", confidence: nil),
+            SegmentRecord(id: 2, meetingId: meeting.id, source: .final, tStart: 4, tEnd: 8, clusterLabel: TrackMerger.micSpeakerLabel, text: "届いているか確認します。", confidence: nil),
+        ]
+        let notes = NotesRecord(meetingId: meeting.id, summary: summary, model: "test")
+        let bundle = try MeetingExporter.build(.init(meeting: meeting, speakers: [], segments: segments, notes: notes, providerDescription: "test"))
+        var files = Dictionary(uniqueKeysWithValues: bundle.files.map { ($0.name, String(decoding: $0.data, as: UTF8.self)) })
+        files[ExportManifest.fileName] = String(decoding: try JSONCoding.encoder().encode(bundle.manifest), as: UTF8.self)
+        return try HookPayload.build(hook: hook, meeting: meeting, folderName: bundle.folderName, files: files)
     }
 }

@@ -83,6 +83,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
         return value.isEmpty ? nil : value
     }
 
+    /// 議事録ができたあとに呼ぶフック（Webhook・コマンド）。秘密のヘッダーの値は Keychain。
+    public var hooks: [MeetingHook] = []
+
     public static let defaultRecordingNotice = "この会議は、議事録を作るために録音と文字起こしをしています。録音を望まない方はお知らせください。"
 
     public var resolvedRecordingNotice: String {
@@ -129,7 +132,12 @@ public struct AppSettings: Codable, Sendable, Equatable {
         recordingNotice = try container.decodeIfPresent(String.self, forKey: .recordingNotice)
         notionDatabase = try container.decodeIfPresent(String.self, forKey: .notionDatabase)
         notionAutoShare = try container.decodeIfPresent(Bool.self, forKey: .notionAutoShare) ?? defaults.notionAutoShare
+        // 壊れたフックの設定でほかの設定まで既定に戻さない
+        hooks = (try? container.decodeIfPresent([MeetingHook].self, forKey: .hooks)) ?? []
     }
+
+    /// 送れるフック（有効で、送り先が入っているもの）。
+    public var activeHooks: [MeetingHook] { hooks.filter { $0.enabled && $0.isConfigured } }
 
     private enum LegacyKeys: String, CodingKey {
         case liveLocale
